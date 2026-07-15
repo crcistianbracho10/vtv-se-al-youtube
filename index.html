@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VTV - Canal 8 en Vivo</title>
+    <title>VTV Canal 8 - En Vivo Directo</title>
     <style>
         body {
             margin: 0;
@@ -26,7 +26,7 @@
         .player-container {
             position: relative;
             width: 100%;
-            padding-bottom: 56.25%; /* Relación de aspecto 16:9 */
+            padding-bottom: 56.25%; /* 16:9 */
             height: 0;
             background-color: #000;
             border-radius: 12px;
@@ -49,12 +49,11 @@
             font-size: 18px;
             font-weight: bold;
             color: #e50914;
-            display: block;
         }
         .status-info {
             margin-top: 15px;
             text-align: center;
-            font-size: 14px;
+            font-size: 13px;
             color: #66fcf1;
             letter-spacing: 1px;
             text-transform: uppercase;
@@ -65,9 +64,9 @@
 
     <div class="container">
         <div class="player-container" id="player-wrapper">
-            <div id="loader" class="loading">Sincronizando señal de VTV...</div>
-            </div>
-        <div class="status-info" id="status">Iniciando...</div>
+            <div id="loader" class="loading">Sincronizando señal en vivo...</div>
+        </div>
+        <div class="status-info" id="status">Buscando transmisión activa de VTV...</div>
     </div>
 
     <script>
@@ -77,49 +76,77 @@
         
         let activeVideoId = null;
 
-        async function updateLivePlayer() {
+        async function fetchLiveId() {
+            // Usamos un proxy CORS público y gratuito para leer la web de youtube directamente desde el navegador
+            const targetUrl = 'https://www.youtube.com/@VTV-canal8/live';
+            const proxyUrl = 'https://api.allorigins.win/get?url=' + encodeURIComponent(targetUrl);
+
             try {
-                // Hacemos la consulta a nuestra función serverless de Vercel
-                const response = await fetch('/api/get-live');
+                const response = await fetch(proxyUrl);
+                if (!response.ok) throw new Error('Error en el Proxy');
+                
                 const data = await response.json();
+                const html = data.contents;
 
-                if (data.live && data.videoId) {
-                    // Solo si el ID del stream ha cambiado (o es la primera carga)
-                    if (data.videoId !== activeVideoId) {
-                        activeVideoId = data.videoId;
-                        
-                        // Eliminamos un iframe anterior si existe
-                        const oldIframe = document.getElementById('vtv-iframe');
-                        if (oldIframe) oldIframe.remove();
-
-                        // Creamos el nuevo iframe limpio
-                        const iframe = document.createElement('iframe');
-                        iframe.id = 'vtv-iframe';
-                        iframe.src = data.embedUrl;
-                        iframe.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture";
-                        iframe.setAttribute('allowfullscreen', 'true');
-                        
-                        wrapper.appendChild(iframe);
-                        loader.style.display = 'none';
-                        statusText.innerText = `Señal en Vivo Activa (ID: ${activeVideoId})`;
-                        console.log("Transmisión actualizada con éxito al ID:", activeVideoId);
-                    }
+                // Buscamos el ID del video usando un regex muy amplio
+                let videoId = null;
+                
+                // Intento 1: Buscar url canónica
+                const canonicalMatch = html.match(/<link rel="canonical" href="https:\/\/www\.youtube\.com\/watch\?v=([^"]+)"/);
+                if (canonicalMatch && canonicalMatch[1]) {
+                    videoId = canonicalMatch[1];
                 } else {
-                    statusText.innerText = "Transmisión no detectada. Reintentando...";
-                    loader.innerText = "Canal temporalmente fuera del aire";
-                    loader.style.display = 'block';
+                    // Intento 2: Buscar en la configuración interna de reproducción
+                    const videoIdMatch = html.match(/"videoId":"([^"]{11})"/);
+                    if (videoIdMatch && videoIdMatch[1]) {
+                        videoId = videoIdMatch[1];
+                    }
                 }
-            } catch (err) {
-                console.error("Error al conectar con la API:", err);
-                statusText.innerText = "Error al intentar sincronizar la señal.";
+
+                return videoId;
+            } catch (error) {
+                console.error("Error obteniendo el ID:", error);
+                return null;
             }
         }
 
-        // Ejecutar inmediatamente al abrir la página
+        async function updateLivePlayer() {
+            statusText.innerText = "Verificando estado del canal...";
+            const videoId = await fetchLiveId();
+
+            if (videoId && videoId.length === 11) {
+                // Si encontramos un ID válido y es diferente al actual
+                if (videoId !== activeVideoId) {
+                    activeVideoId = videoId;
+                    
+                    // Limpiamos reproductor anterior
+                    const oldIframe = document.getElementById('vtv-iframe');
+                    if (oldIframe) oldIframe.remove();
+
+                    // Insertamos el nuevo iframe con el ID real descubierto
+                    const iframe = document.createElement('iframe');
+                    iframe.id = 'vtv-iframe';
+                    iframe.src = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&rel=0`;
+                    iframe.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture";
+                    iframe.setAttribute('allowfullscreen', 'true');
+                    
+                    wrapper.appendChild(iframe);
+                    loader.style.display = 'none';
+                    statusText.innerText = `Conectado al directo activo (ID: ${activeVideoId})`;
+                    console.log("Señal actualizada:", activeVideoId);
+                } else {
+                    statusText.innerText = "La señal sigue activa sin cambios.";
+                }
+            } else {
+                statusText.innerText = "VTV no parece estar transmitiendo o YouTube bloqueó la consulta. Reintentando...";
+            }
+        }
+
+        // Ejecución inicial
         updateLivePlayer();
 
-        // Monitorear cambios cada 3 minutos (180000 ms) en segundo plano
-        setInterval(updateLivePlayer, 180000);
+        // Re-verificar cada 2 minutos si el directo cambió o se reinició
+        setInterval(updateLivePlayer, 120000);
     </script>
 </body>
 </html>
